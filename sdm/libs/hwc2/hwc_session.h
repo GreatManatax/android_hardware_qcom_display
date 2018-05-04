@@ -20,7 +20,12 @@
 #ifndef __HWC_SESSION_H__
 #define __HWC_SESSION_H__
 
+#ifdef DISPLAY_CONFIG_1_1
+#include <vendor/display/config/1.1/IDisplayConfig.h>
+#else
 #include <vendor/display/config/1.0/IDisplayConfig.h>
+#endif
+
 #include <core/core_interface.h>
 #include <utils/locker.h>
 
@@ -35,7 +40,11 @@
 
 namespace sdm {
 
+#ifdef DISPLAY_CONFIG_1_1
+using vendor::display::config::V1_1::IDisplayConfig;
+#else
 using ::vendor::display::config::V1_0::IDisplayConfig;
+#endif
 using ::android::hardware::Return;
 
 // Create a singleton uevent listener thread valid for life of hardware composer process.
@@ -78,9 +87,14 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
   static int32_t CallDisplayFunction(hwc2_device_t *device, hwc2_display_t display,
                                      HWC2::Error (HWCDisplay::*member)(Args...), Args... args) {
     if (!device) {
+      return HWC2_ERROR_BAD_PARAMETER;
+    }
+
+    if (display >= HWC_NUM_DISPLAY_TYPES) {
       return HWC2_ERROR_BAD_DISPLAY;
     }
 
+    SCOPE_LOCK(locker_[display]);
     HWCSession *hwc_session = static_cast<HWCSession *>(device);
     auto status = HWC2::Error::BadDisplay;
     if (hwc_session->hwc_display_[display]) {
@@ -98,6 +112,7 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
       return HWC2_ERROR_BAD_DISPLAY;
     }
 
+    SCOPE_LOCK(locker_[display]);
     HWCSession *hwc_session = static_cast<HWCSession *>(device);
     auto status = HWC2::Error::BadDisplay;
     if (hwc_session->hwc_display_[display]) {
@@ -130,8 +145,6 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
                                   hwc2_function_pointer_t pointer);
   static int32_t SetOutputBuffer(hwc2_device_t *device, hwc2_display_t display,
                                  buffer_handle_t buffer, int32_t releaseFence);
-  static int32_t SetLayerZOrder(hwc2_device_t *device, hwc2_display_t display, hwc2_layer_t layer,
-                                uint32_t z);
   static int32_t SetPowerMode(hwc2_device_t *device, hwc2_display_t display, int32_t int_mode);
   static int32_t ValidateDisplay(hwc2_device_t *device, hwc2_display_t display,
                                  uint32_t *out_num_types, uint32_t *out_num_requests);
@@ -143,6 +156,7 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
  private:
   static const int kExternalConnectionTimeoutMs = 500;
   static const int kPartialUpdateControlTimeoutMs = 100;
+  static bool disable_skip_validate_;
 
   // hwc methods
   static int Open(const hw_module_t *module, const char *name, hw_device_t **device);
@@ -167,6 +181,9 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
   int32_t SetSecondaryDisplayStatus(int disp_id, HWCDisplay::DisplayStatus status);
   int32_t GetPanelBrightness(int *level);
   int32_t MinHdcpEncryptionLevelChanged(int disp_id, uint32_t min_enc_level);
+  int32_t CreateExternalDisplay(int disp, uint32_t primary_width = 0,
+                                 uint32_t primary_height = 0,
+                                 bool use_primary_res  = false);
 
   // service methods
   void StartServices();
@@ -198,6 +215,11 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
   Return<int32_t> setCameraLaunchStatus(uint32_t on) override;
   Return<void> displayBWTransactionPending(displayBWTransactionPending_cb _hidl_cb) override;
 
+  // Methods from ::android::hardware::display::config::V1_1::IDisplayConfig follow.
+#ifdef DISPLAY_CONFIG_1_1
+  Return<int32_t> setDisplayAnimating(uint64_t display_id, bool animating) override;
+#endif
+
   // QClient methods
   virtual android::status_t notifyCallback(uint32_t command, const android::Parcel *input_parcel,
                                            android::Parcel *output_parcel);
@@ -218,7 +240,7 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
   void Refresh(hwc2_display_t display);
   void HotPlug(hwc2_display_t display, HWC2::Connection state);
 
-  static Locker locker_;
+  static Locker locker_[HWC_NUM_DISPLAY_TYPES];
   CoreInterface *core_intf_ = nullptr;
   HWCDisplay *hwc_display_[HWC_NUM_DISPLAY_TYPES] = {nullptr};
   HWCCallbacks callbacks_;
